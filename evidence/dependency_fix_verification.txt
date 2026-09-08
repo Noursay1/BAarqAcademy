@@ -1,0 +1,91 @@
+===== DATE =====
+Tue Sep  8 10:09:50 PM UTC 2026
+
+===== COMPOSE STATUS =====
+NAME       IMAGE                                                                                        COMMAND                  SERVICE    CREATED          STATUS                    PORTS
+app-01     barq-assessment-app-01                                                                       "python -m app.server"   app-01     2 minutes ago    Up 2 minutes (healthy)    8080/tcp
+app-02     barq-assessment-app-02                                                                       "python -m app.server"   app-02     2 minutes ago    Up 2 minutes (healthy)    8080/tcp
+nginx      nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236    "/docker-entrypoint.…"   nginx      47 minutes ago   Up 41 minutes             127.0.0.1:8080->80/tcp
+postgres   postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685   "docker-entrypoint.s…"   postgres   47 minutes ago   Up 47 minutes (healthy)   
+redis      redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf     "docker-entrypoint.s…"   redis      47 minutes ago   Up 47 minutes (healthy)   
+
+===== READY =====
+HTTP/1.1 200 OK
+Server: nginx/1.28.3
+Date: Tue, 08 Sep 2026 22:09:50 GMT
+Content-Type: application/json
+Content-Length: 133
+Connection: keep-alive
+X-Instance-ID: app-02
+X-Request-ID: a737b4158445663ba461d73e3b28fb60
+Cache-Control: no-store
+
+{"dependencies":{"postgres":"ready","redis":"ready"},"instance_id":"app-02","service":"barq-api","status":"ready","version":"2.0.0"}
+
+===== RECORDS =====
+HTTP/1.1 200 OK
+Server: nginx/1.28.3
+Date: Tue, 08 Sep 2026 22:09:50 GMT
+Content-Type: application/json
+Content-Length: 172
+Connection: keep-alive
+X-Instance-ID: app-01
+X-Request-ID: 2dca35bc7fda6cc44bd73f525fa5f262
+Cache-Control: no-store
+
+{"instance_id":"app-01","records":[{"id":1,"title":"Review service readiness"},{"id":2,"title":"Document the operating procedure"}],"service":"barq-api","version":"2.0.0"}
+
+===== COUNTER =====
+HTTP/1.1 200 OK
+Server: nginx/1.28.3
+Date: Tue, 08 Sep 2026 22:09:50 GMT
+Content-Type: application/json
+Content-Length: 76
+Connection: keep-alive
+X-Instance-ID: app-02
+X-Request-ID: df1c4d58ad57d98ea0c19fb0a6ae4097
+Cache-Control: no-store
+
+{"counter":3,"instance_id":"app-02","service":"barq-api","version":"2.0.0"}
+
+===== INSTANCE TEST =====
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+
+{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+
