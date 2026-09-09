@@ -1,41 +1,32 @@
 #!/usr/bin/env python3
-"""Stop one backend (app-01), prove continued availability through app-02,
-restore app-01, and prove both instances serve again.
-
-Bounded waits, PASS/FAIL summary, non-zero exit on failure, and the target
-container is always restarted (even on error/interrupt) so the environment
-is never left in a torn-down state.
-"""
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
+
 
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8080")
-COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT", "barq-assessment")
-TARGET_CONTAINER = os.getenv("FAILURE_TARGET", "app-01")
-SURVIVOR_CONTAINER = "app-02" if TARGET_CONTAINER == "app-01" else "app-01"
+APP_CONTAINER = os.getenv("APP_CONTAINER", "app-01")
 
-BASELINE_REQUESTS = 10
-DURING_FAILURE_REQUESTS = 20
-AFTER_RECOVERY_REQUESTS = 10
-RECOVERY_TIMEOUT = 60
-REQUEST_TIMEOUT = 4
-REQUEST_INTERVAL = 0.2
+BASELINE_REQUESTS = int(os.getenv("BASELINE_REQUESTS", "20"))
+FAILURE_REQUESTS = int(os.getenv("FAILURE_REQUESTS", "30"))
+RECOVERY_REQUESTS = int(os.getenv("RECOVERY_REQUESTS", "20"))
 
-EVIDENCE_PATH = os.getenv("EVIDENCE_PATH", "evidence/failure_test.txt")
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "3"))
+HEALTH_TIMEOUT = int(os.getenv("HEALTH_TIMEOUT", "60"))
+HEALTH_INTERVAL = int(os.getenv("HEALTH_INTERVAL", "2"))
 
 
 class FailureTestError(Exception):
     pass
 
 
-def run_command(command, timeout=15, check=True):
+def run(command, timeout=15, check=True):
     try:
         result = subprocess.run(
             command,
@@ -44,8 +35,14 @@ def run_command(command, timeout=15, check=True):
             timeout=timeout,
             check=False,
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        raise FailureTestError(f"command failed: {' '.join(command)}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise FailureTestError(
+            f"command timed out: {' '.join(command)}"
+        ) from exc
+    except OSError as exc:
+        raise FailureTestError(
+            f"command execution failed: {' '.join(command)}: {exc}"
+        ) from exc
 
     if check and result.returncode != 0:
         raise FailureTestError(
@@ -56,212 +53,374 @@ def run_command(command, timeout=15, check=True):
     return result
 
 
-def http_request(path, timeout=REQUEST_TIMEOUT):
+def request(path="/instance"):
     url = f"{BASE_URL}{path}"
+
+    req = urllib.request.Request(
+        url,
+        method="GET",
+    )
+
+    started = time.monotonic()
+
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             body = response.read().decode("utf-8", errors="replace")
-            return response.status, body
+            elapsed_ms = (time.monotonic() - started) * 1000
+
+            return {
+                "status": response.status,
+                "body": body,
+                "elapsed_ms": elapsed_ms,
+                "error": None,
+            }
+
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        return exc.code, body
-    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
-        return None, str(exc)
+        elapsed_ms = (time.monotonic() - started) * 1000
+
+        return {
+            "status": exc.code,
+            "body": body,
+            "elapsed_ms": elapsed_ms,
+            "error": f"HTTP {exc.code}",
+        }
+
+    except Exception as exc:
+        elapsed_ms = (time.monotonic() - started) * 1000
+
+        return {
+            "status": None,
+            "body": "",
+            "elapsed_ms": elapsed_ms,
+            "error": str(exc),
+        }
 
 
-def instance_of(body):
+def parse_instance(body):
     try:
         data = json.loads(body)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError:
         return None
-    return data.get("instance_id") or data.get("instance") or data.get("id")
+
+    if not isinstance(data, dict):
+        return None
+
+    return (
+        data.get("instance_id")
+        or data.get("instance")
+        or data.get("id")
+    )
 
 
-def sample_instance(path="/instance", count=10, interval=REQUEST_INTERVAL):
-    """Hit the given endpoint `count` times and return (successes, errors,
-    instances_seen) without ever raising -- callers decide pass/fail."""
-    successes = 0
+def traffic(label, count):
+    results = []
+    instances = Counter()
+    status_codes = Counter()
     errors = 0
-    instances_seen = set()
+    successes = 0
+    total_ms = 0.0
+
+    print(f"\n===== {label} ({count} requests) =====")
 
     for _ in range(count):
-        status, body = http_request(path)
+        result = request("/instance")
+        results.append(result)
+
+        status = result["status"]
+
+        if status is not None:
+            status_codes[str(status)] += 1
+
+        total_ms += result["elapsed_ms"]
+
         if status == 200:
             successes += 1
-            instance = instance_of(body)
+
+            instance = parse_instance(result["body"])
             if instance:
-                instances_seen.add(str(instance))
+                instances[instance] += 1
+
         else:
             errors += 1
-        time.sleep(interval)
 
-    return successes, errors, instances_seen
+    avg_ms = total_ms / count if count else 0.0
+
+    print(f"requests={count}")
+    print(f"successes={successes}")
+    print(f"errors={errors}")
+    print(f"average_latency_ms={avg_ms:.2f}")
+    print(f"status_codes={dict(status_codes)}")
+    print(f"instances={dict(instances)}")
+
+    return {
+        "results": results,
+        "requests": count,
+        "successes": successes,
+        "errors": errors,
+        "instances": instances,
+        "status_codes": status_codes,
+        "average_latency_ms": avg_ms,
+    }
 
 
-def container_state(container):
-    result = run_command(
-        ["docker", "inspect", container, "--format", "{{.State.Status}}"],
-        check=False,
+def container_running(container):
+    result = run(
+        [
+            "docker",
+            "inspect",
+            container,
+            "--format",
+            "{{.State.Status}}",
+        ]
     )
-    if result.returncode != 0:
-        return "missing"
-    return result.stdout.strip()
+
+    return result.stdout.strip() == "running"
 
 
-def stop_container(container):
-    run_command(["docker", "compose", "-p", COMPOSE_PROJECT, "stop", container])
+def container_healthy(container):
+    result = run(
+        [
+            "docker",
+            "inspect",
+            container,
+            "--format",
+            "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        ]
+    )
+
+    return result.stdout.strip() == "healthy"
 
 
-def start_container(container):
-    run_command(["docker", "compose", "-p", COMPOSE_PROJECT, "start", container])
-
-
-def wait_for_healthy(container, timeout=RECOVERY_TIMEOUT):
+def wait_for_http_health(timeout=HEALTH_TIMEOUT):
     deadline = time.time() + timeout
+
     while time.time() < deadline:
-        result = run_command(
-            ["docker", "inspect", container, "--format", "{{.State.Health.Status}}"],
-            check=False,
+        result = request("/health")
+
+        if result["status"] == 200:
+            return True
+
+        time.sleep(HEALTH_INTERVAL)
+
+    return False
+
+
+def wait_for_container_health(container, timeout=HEALTH_TIMEOUT):
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if container_healthy(container):
+                return True
+        except FailureTestError:
+            pass
+
+        time.sleep(HEALTH_INTERVAL)
+
+    return False
+
+
+def stop_backend(container):
+    print(f"\nStopping backend: {container}")
+    run(["docker", "stop", container], timeout=20)
+
+    if container_running(container):
+        raise FailureTestError(
+            f"{container} is still running after docker stop"
         )
-        status = result.stdout.strip() if result.returncode == 0 else ""
-        if status == "healthy":
-            return
-        if status == "":
-            # No health check defined -- fall back to running state.
-            if container_state(container) == "running":
-                return
-        time.sleep(2)
 
-    raise FailureTestError(
-        f"{container} did not become healthy within {timeout}s"
-    )
+    print(f"PASS {container} stopped")
 
 
-def write_evidence(lines):
-    os.makedirs(os.path.dirname(EVIDENCE_PATH) or ".", exist_ok=True)
-    with open(EVIDENCE_PATH, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
+def restore_backend(container):
+    print(f"\nRestoring backend: {container}")
+    run(["docker", "start", container], timeout=20)
+
+    print(f"Waiting for {container} health...")
+
+    if not wait_for_container_health(container):
+        raise FailureTestError(
+            f"{container} did not become healthy within "
+            f"{HEALTH_TIMEOUT}s"
+        )
+
+    print(f"PASS {container} is healthy again")
+
+    if not wait_for_http_health():
+        raise FailureTestError(
+            "NGINX /health did not recover after backend restoration"
+        )
+
+    print("PASS NGINX health recovered")
 
 
 def main():
-    evidence = []
-    evidence.append(f"BARQ failure/recovery test: target={TARGET_CONTAINER}")
-    evidence.append(f"started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
+    failure = False
+    backend_was_stopped = False
 
-    failures = 0
+    print("BARQ backend failure/recovery test")
+    print(f"BASE_URL={BASE_URL}")
+    print(f"APP_CONTAINER={APP_CONTAINER}")
 
     try:
-        # 1. Baseline: confirm both instances currently answer.
-        print(f"Baseline: sampling /instance x{BASELINE_REQUESTS}")
-        b_success, b_errors, b_instances = sample_instance(count=BASELINE_REQUESTS)
-        evidence.append(
-            f"baseline: success={b_success} errors={b_errors} "
-            f"instances_seen={sorted(b_instances)}"
+        # ---------------------------------------------------------
+        # 1. Baseline
+        # ---------------------------------------------------------
+        if not container_running(APP_CONTAINER):
+            raise FailureTestError(
+                f"{APP_CONTAINER} is not running before test"
+            )
+
+        if not wait_for_http_health():
+            raise FailureTestError(
+                "NGINX /health is not available before failure test"
+            )
+
+        baseline = traffic(
+            "BASELINE",
+            BASELINE_REQUESTS,
         )
-        if b_errors > 0 or {"app-01", "app-02"} - b_instances:
-            failures += 1
-            print(
-                f"FAIL baseline: errors={b_errors}, "
-                f"instances_seen={sorted(b_instances)} (expected both instances, zero errors)",
-                file=sys.stderr,
+
+        if baseline["successes"] != BASELINE_REQUESTS:
+            raise FailureTestError(
+                "baseline traffic is not fully successful"
             )
-        else:
-            print(f"PASS baseline: {b_success} requests, both instances observed")
 
-        # 2. Stop the target backend.
-        print(f"Stopping {TARGET_CONTAINER}...")
-        stop_container(TARGET_CONTAINER)
-        state = container_state(TARGET_CONTAINER)
-        evidence.append(f"stopped_state={state}")
-        if state not in ("exited", "missing"):
-            failures += 1
-            print(f"FAIL {TARGET_CONTAINER} did not stop (state={state})", file=sys.stderr)
-        else:
-            print(f"PASS {TARGET_CONTAINER} stopped (state={state})")
+        if APP_CONTAINER not in baseline["instances"]:
+            raise FailureTestError(
+                f"baseline did not observe {APP_CONTAINER}"
+            )
 
-        # 3. Traffic during failure: service must continue via the survivor,
-        #    and any errors must be attributable to the stopped instance's
-        #    in-flight/retry window, not total unavailability.
-        print(f"During failure: sampling /instance x{DURING_FAILURE_REQUESTS}")
-        d_success, d_errors, d_instances = sample_instance(count=DURING_FAILURE_REQUESTS)
-        evidence.append(
-            f"during_failure: success={d_success} errors={d_errors} "
-            f"instances_seen={sorted(d_instances)}"
+        if "app-02" not in baseline["instances"]:
+            raise FailureTestError(
+                "baseline did not observe app-02"
+            )
+
+        print("PASS baseline traffic")
+
+        # ---------------------------------------------------------
+        # 2. Stop one backend
+        # ---------------------------------------------------------
+        stop_backend(APP_CONTAINER)
+        backend_was_stopped = True
+
+        # Give NGINX a moment to detect the failed upstream.
+        time.sleep(2)
+
+        # ---------------------------------------------------------
+        # 3. Traffic during failure
+        # ---------------------------------------------------------
+        failure_run = traffic(
+            "DURING BACKEND FAILURE",
+            FAILURE_REQUESTS,
         )
-        if d_success == 0:
-            failures += 1
-            print("FAIL during-failure: no successful responses through NGINX", file=sys.stderr)
-        elif SURVIVOR_CONTAINER not in d_instances:
-            failures += 1
-            print(
-                f"FAIL during-failure: {SURVIVOR_CONTAINER} did not serve any requests",
-                file=sys.stderr,
-            )
-        elif TARGET_CONTAINER in d_instances:
-            failures += 1
-            print(
-                f"FAIL during-failure: stopped container {TARGET_CONTAINER} "
-                f"still reported as serving traffic",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"PASS during-failure: {d_success} succeeded via {SURVIVOR_CONTAINER}, "
-                f"{d_errors} errors observed while {TARGET_CONTAINER} was down"
+
+        if failure_run["successes"] == 0:
+            raise FailureTestError(
+                "no successful traffic remained while one backend was down"
             )
 
-        # 4. Restore the backend.
-        print(f"Restoring {TARGET_CONTAINER}...")
-        start_container(TARGET_CONTAINER)
-        wait_for_healthy(TARGET_CONTAINER)
-        evidence.append(f"restored_state={container_state(TARGET_CONTAINER)}")
-        print(f"PASS {TARGET_CONTAINER} healthy again")
+        if "app-02" not in failure_run["instances"]:
+            raise FailureTestError(
+                "app-02 did not serve traffic while app-01 was down"
+            )
 
-        # 5. Traffic after recovery: both instances must serve again.
-        print(f"After recovery: sampling /instance x{AFTER_RECOVERY_REQUESTS}")
-        a_success, a_errors, a_instances = sample_instance(count=AFTER_RECOVERY_REQUESTS)
-        evidence.append(
-            f"after_recovery: success={a_success} errors={a_errors} "
-            f"instances_seen={sorted(a_instances)}"
+        print("PASS service remained available through app-02")
+
+        # ---------------------------------------------------------
+        # 4. Restore backend
+        # ---------------------------------------------------------
+        restore_backend(APP_CONTAINER)
+        backend_was_stopped = False
+
+        # ---------------------------------------------------------
+        # 5. Prove restored backend serves again
+        # ---------------------------------------------------------
+        recovery = traffic(
+            "RECOVERY",
+            RECOVERY_REQUESTS,
         )
-        if a_errors > 0 or {"app-01", "app-02"} - a_instances:
-            failures += 1
-            print(
-                f"FAIL after-recovery: errors={a_errors}, "
-                f"instances_seen={sorted(a_instances)} (expected both instances, zero errors)",
-                file=sys.stderr,
+
+        if recovery["successes"] != RECOVERY_REQUESTS:
+            raise FailureTestError(
+                "recovery traffic was not fully successful"
             )
-        else:
-            print(f"PASS after-recovery: {a_success} requests, both instances observed")
+
+        if APP_CONTAINER not in recovery["instances"]:
+            raise FailureTestError(
+                f"recovered backend {APP_CONTAINER} "
+                "was not observed serving requests"
+            )
+
+        if "app-02" not in recovery["instances"]:
+            raise FailureTestError(
+                "app-02 was not observed after recovery"
+            )
+
+        print("PASS recovered backend served traffic again")
+
+        # ---------------------------------------------------------
+        # 6. Final health check
+        # ---------------------------------------------------------
+        if not wait_for_http_health():
+            raise FailureTestError(
+                "final NGINX health check failed"
+            )
+
+        print("PASS final /health check")
+
+        # ---------------------------------------------------------
+        # Summary
+        # ---------------------------------------------------------
+        print("\n===== FAILURE TEST SUMMARY =====")
+        print(
+            f"baseline: successes={baseline['successes']} "
+            f"errors={baseline['errors']}"
+        )
+        print(
+            f"during_failure: successes={failure_run['successes']} "
+            f"errors={failure_run['errors']}"
+        )
+        print(
+            f"recovery: successes={recovery['successes']} "
+            f"errors={recovery['errors']}"
+        )
+
+        print(
+            "\nFAILURE TEST: PASS"
+        )
+
+        return 0
 
     except FailureTestError as exc:
-        failures += 1
-        evidence.append(f"error={exc}")
-        print(f"FAIL {exc}", file=sys.stderr)
-
-    finally:
-        # Safe cleanup: always make sure the target container is running,
-        # regardless of what happened above.
-        if container_state(TARGET_CONTAINER) != "running":
-            print(f"Cleanup: ensuring {TARGET_CONTAINER} is started")
-            try:
-                start_container(TARGET_CONTAINER)
-                wait_for_healthy(TARGET_CONTAINER, timeout=RECOVERY_TIMEOUT)
-            except FailureTestError as exc:
-                print(f"Cleanup FAILED to restore {TARGET_CONTAINER}: {exc}", file=sys.stderr)
-
-        evidence.append(f"finished_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
-        evidence.append(f"failures={failures}")
-        write_evidence(evidence)
-        print(f"Evidence written to {EVIDENCE_PATH}")
-
-    print()
-    if failures:
-        print(f"FAILURE TEST: FAIL ({failures} check(s) failed)")
+        failure = True
+        print(f"\nFAIL: {exc}", file=sys.stderr)
         return 1
 
-    print("FAILURE TEST: PASS")
-    return 0
+    finally:
+        # Safety cleanup:
+        # if interrupted/failure occurred while app-01 was stopped,
+        # bring it back without touching the rest of the environment.
+        if backend_was_stopped:
+            print(
+                f"\nCleanup: restoring {APP_CONTAINER}",
+                file=sys.stderr,
+            )
+
+            try:
+                restore_backend(APP_CONTAINER)
+            except Exception as exc:
+                print(
+                    f"Cleanup failed: {exc}",
+                    file=sys.stderr,
+                )
+
+        if failure:
+            print(
+                "\nFAILURE TEST: FAIL",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":
