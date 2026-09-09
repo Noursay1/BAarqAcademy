@@ -1,0 +1,80 @@
+===== BACKUP / RESTORE FINAL EVIDENCE =====
+Tue Sep  8 11:10:04 PM UTC 2026
+
+===== BACKUP FILE =====
+-rw-r--r-- 1 Dahy Dahy 1.9K Sep  9 02:04 backups/barq_tasks_20260908T230437Z.sql
+
+===== PERSISTENT VOLUME =====
+local     barq-assessment_postgres-data
+
+===== RESTORE TEST =====
+backup=backups/barq_tasks_20260908T230437Z.sql
+Restoring PostgreSQL backup...
+database=barq_tasks
+container=postgres
+source=backups/barq_tasks_20260908T230437Z.sql
+Resetting public schema...
+NOTICE:  drop cascades to table records
+DROP SCHEMA
+CREATE SCHEMA
+Loading backup...
+ set_config 
+------------
+ 
+(1 row)
+
+ setval 
+--------
+      8
+(1 row)
+
+Verifying restored database...
+PASS: PostgreSQL backup restored successfully
+
+===== RESTORED MARKER =====
+{"instance_id":"app-02","records":[{"id":1,"title":"Review service readiness"},{"id":2,"title":"Document the operating procedure"},{"id":3,"title":"Persistence proof"},{"id":4,"title":"validation-fbf3f635fed7"},{"id":5,"title":"validation-e2edd2e418dc"},{"id":6,"title":"validation-a3c06294858b"},{"id":7,"title":"validation-a81d351b9a8d"},{"id":8,"title":"backup-proof-20260908T230427Z"}],"service":"barq-api","version":"2.0.0"}
+
+
+===== VALIDATION =====
+BARQ validation starting: http://127.0.0.1:8080
+
+PASS required Compose services
+PASS required containers running
+PASS networks nginx -> frontend
+PASS networks app-01 -> backend, frontend
+PASS networks app-02 -> backend, frontend
+PASS networks postgres -> backend
+PASS networks redis -> backend
+PASS backend network is internal
+PASS nginx published port 127.0.0.1:8080
+PASS no host port for app-01
+PASS no host port for app-02
+PASS no host port for postgres
+PASS no host port for redis
+PASS resources app-01 -> CPU 1, RAM 536870912
+PASS resources app-02 -> CPU 1, RAM 536870912
+PASS resources postgres -> CPU 1, RAM 536870912
+PASS resources redis -> CPU 0.5, RAM 268435456
+PASS resources nginx -> CPU 0.5, RAM 134217728
+PASS endpoint / -> HTTP 200
+PASS endpoint /health -> HTTP 200
+PASS endpoint /ready -> HTTP 200
+PASS /ready reports PostgreSQL and Redis
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS endpoint /instance -> HTTP 200
+PASS load balancing observed app-01 and app-02
+PASS endpoint /records -> HTTP 200
+PASS /records POST -> HTTP 201
+PASS endpoint /records -> HTTP 200
+PASS /records persistence verified
+PASS /counter increased 17 -> 18
+
+VALIDATION: PASS

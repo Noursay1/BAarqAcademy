@@ -1,0 +1,112 @@
+name: BARQ CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  COMPOSE_PROJECT: barq-assessment
+  PUBLIC_PORT: "8080"
+  POSTGRES_PASSWORD: ci-test-password
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required files
+        run: |
+          set -euo pipefail
+
+          test -f Dockerfile
+          test -f docker-compose.yml
+          test -f nginx/nginx.conf
+          test -f validate.py
+          test -f failure_test.py
+          test -f backup.sh
+          test -f restore.sh
+
+      - name: Python syntax
+        run: |
+          set -euo pipefail
+
+          python3 -m py_compile \
+            app/__init__.py \
+            app/server.py \
+            validate.py \
+            failure_test.py
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+
+          bash -n backup.sh
+          bash -n restore.sh
+          bash -n video_challenge.sh
+
+      - name: Compose validation
+        run: |
+          set -euo pipefail
+
+          docker compose -p "$COMPOSE_PROJECT" config --quiet
+
+      - name: Build
+        run: |
+          set -euo pipefail
+
+          docker compose -p "$COMPOSE_PROJECT" build
+
+      - name: Start environment
+        run: |
+          set -euo pipefail
+
+          docker compose -p "$COMPOSE_PROJECT" up -d
+
+      - name: Wait for readiness
+        run: |
+          set -euo pipefail
+
+          for i in $(seq 1 60); do
+            if curl -fsS \
+              --max-time 3 \
+              http://127.0.0.1:8080/ready \
+              >/dev/null 2>&1; then
+              echo "PASS: /ready"
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "FAIL: services did not become ready"
+          docker compose -p "$COMPOSE_PROJECT" ps -a
+          docker compose -p "$COMPOSE_PROJECT" logs --no-color
+          exit 1
+
+      - name: Validate environment
+        run: |
+          set -euo pipefail
+
+          python3 validate.py
+
+      - name: Service state
+        if: always()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT" ps -a
+
+      - name: Service logs
+        if: always()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT" logs --no-color
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT" down -v

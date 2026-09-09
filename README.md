@@ -1,97 +1,376 @@
-<img src="assets/barq-logo.svg" alt="BARQ Systems" width="180">
+# BARQ Systems DevOps Internship Task
 
-# DevOps Internship Task - Starter v2
+Containerized Flask API environment with NGINX load balancing, PostgreSQL, Redis, health/readiness checks, persistence, backup/restore, automated validation, failure testing, and CI.
 
-**Due date:** ____________________
+## Architecture
 
-**Time window:** 4 calendar days from the invitation email date/time.
+The runtime consists of:
 
-Read [the task](assessment/TASK.md), then [the API contract](assessment/APPLICATION.md).
-Everyone receives this same release. The environment is intentionally broken.
-Hidden issue types and count are not disclosed. Investigate this project; do not replace it.
+- NGINX reverse proxy
+- `app-01` Flask application instance
+- `app-02` Flask application instance
+- PostgreSQL
+- Redis
 
-## Included
+Network segmentation:
 
-- Flask API, PostgreSQL, Redis, Docker and NGINX starter files.
-- Three historical logs, a question template and documentation templates.
-- App-only tests and a recorded challenge script.
-- Unimplemented validation, failure-test and backup/restore placeholders.
+- `frontend`: NGINX + application instances
+- `backend`: application instances + PostgreSQL + Redis
+- `backend` is Docker `internal: true`
 
-Use synthetic lab accounts/data only. Supplied values are for this disposable exercise,
-never for real services. Keep the lab on your local machine; do not expose it publicly.
+Only NGINX is published to the host.
 
-## Before you start
+### Runtime topology
 
-- Linux or WSL2, Python 3.12, Git and Docker with Compose.
-- Docker Desktop must use Linux containers. Run shell scripts in Linux/WSL.
-- Suggested capacity: 2 CPU cores, 4 GB free RAM and 3 GB free disk, plus Docker overhead.
-- Internet for first downloads and GitHub. No cloud account or paid registry required.
-- Use a machine where container names app-01, app-02, nginx, postgres and redis are unused.
-  Do not delete someone else's containers to free those names.
-- Intended public port: 8080 before the video, 8090 after the live change.
-  If either is occupied, ask the organizer for a documented workstation exception.
+```text
+Client
+  |
+  | 127.0.0.1:8080
+  v
++-------------------+
+| nginx :80         |
++-------------------+
+          |
+      frontend
+      /       \
+     v         v
++---------+ +---------+
+| app-01  | | app-02  |
+| :8080   | | :8080   |
++---------+ +---------+
+      \       /
+       \     /
+        backend
+        /     \
+       v       v
++-----------+ +---------+
+| postgres  | | redis   |
+| :5432     | | :6379   |
++-----------+ +---------+
+     |             |
+     v             v
+postgres-data   redis-data
+```
 
-## Start
+## Prerequisites
 
-Clone the supplied Git bundle/repository. Keep both release commits and the v2 baseline tag.
-Set your own Git name/email before making changes.
+- Docker Engine
+- Docker Compose v2
+- Bash
+- Python 3
+- curl
 
-From the repository root:
+## Configuration
+
+Create `.env` from the example:
 
 ```bash
-git status
-git log -2 --oneline
 cp .env.example .env
-docker version
-docker compose version
-docker compose -p barq-assessment up --build -d
-docker compose -p barq-assessment ps -a
-docker compose -p barq-assessment logs --no-color
 ```
 
-The initial environment is not expected to pass. Record what actually happens.
-The intended URL is http://127.0.0.1:8080; do not assume the starter configuration is correct.
-
-App-only checks use fake dependencies, not real SQL/Redis or Docker networking:
+Set a strong local PostgreSQL password:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+POSTGRES_PASSWORD=change-this-local-password
+PUBLIC_PORT=8080
 ```
 
-## Your work
+`.env` is intentionally ignored by Git.
 
-- Complete [assessment/TASK.md](assessment/TASK.md).
-- Implement validate.py, failure_test.py, backup.sh and restore.sh, or documented equivalents.
-  Placeholders deliberately exit 2; they are unfinished deliverables, not validation evidence.
-- Create .github/workflows/ci.yml yourself.
-- Complete the root report templates and docs/EVIDENCE_INDEX.md.
-- Add architecture.png or architecture.pdf.
-- Replace this README with copyable setup/build/run/test/failure/backup/restore/cleanup commands.
-- Commit as you work. Do not commit real secrets, backups, virtual environments or challenge state.
-
-## Recorded challenge
-
-Use the supplied video_challenge.sh unchanged. Read its code if needed; do not run it early.
-After repairing the environment, run it once, for the first time in the video working copy,
-during the continuous 12-18 minute recording. The script requires healthy services, both
-initial instances and the target network layout. Preflight failures make no runtime changes.
+## Build and start
 
 ```bash
-./video_challenge.sh
+docker compose -p barq-assessment build
+docker compose -p barq-assessment up -d
 ```
 
-If you deliberately changed the project name, pass --project YOUR_PROJECT.
-An organizer-approved alternate local URL can be passed with --url http://127.0.0.1:PORT.
-The script touches only matching Compose-owned lab containers/networks.
-Keep the receipt in .assessment/challenge.json for the evidence index. Do not delete the
-one-run marker to retry. A local marker is not tamper-proof; ownership is judged from evidence.
-Do not use docker compose down to reset the runtime challenge.
+Check service state:
 
-## Stop safely
+```bash
+docker compose -p barq-assessment ps
+```
 
-Outside the recorded challenge, docker compose -p barq-assessment down stops this lab.
-Do not use --volumes during persistence tests. Avoid global Docker prune/cleanup commands.
-Back up anything you need before removing containers; investigate whether data actually persists.
+## Health and readiness
+
+Application health:
+
+```bash
+curl -fsS http://127.0.0.1:8080/health
+```
+
+Dependency-aware readiness:
+
+```bash
+curl -fsS http://127.0.0.1:8080/ready
+```
+
+Instance identity:
+
+```bash
+curl -fsS http://127.0.0.1:8080/instance
+```
+
+## API endpoints
+
+**Root**
+```bash
+curl -fsS http://127.0.0.1:8080/
+```
+
+**Health**
+```bash
+curl -fsS http://127.0.0.1:8080/health
+```
+
+**Readiness**
+```bash
+curl -fsS http://127.0.0.1:8080/ready
+```
+
+**Instance**
+```bash
+curl -fsS http://127.0.0.1:8080/instance
+```
+
+Run it repeatedly to observe load balancing:
+
+```bash
+for i in $(seq 1 10); do
+  curl -fsS http://127.0.0.1:8080/instance
+  echo
+done
+```
+
+**Records**
+
+List records:
+
+```bash
+curl -fsS http://127.0.0.1:8080/records
+```
+
+Create a record:
+
+```bash
+curl -fsS \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"readme-test"}' \
+  http://127.0.0.1:8080/records
+```
+
+**Counter**
+```bash
+curl -fsS http://127.0.0.1:8080/counter
+```
+
+## Automated validation
+
+Run the complete assignment validation:
+
+```bash
+./validate.py
+```
+
+The validator checks:
+
+- required services
+- required containers
+- network topology
+- internal backend network
+- host-port exposure
+- resource limits
+- HTTP endpoints
+- dependency readiness
+- load balancing
+- record persistence
+- Redis-backed counter behavior
+
+A successful run ends with:
+
+```text
+VALIDATION: PASS
+```
+
+## Failure test
+
+Run:
+
+```bash
+./failure_test.py
+```
+
+The test:
+
+1. Establishes baseline traffic.
+2. Stops app-01.
+3. Sends traffic through NGINX.
+4. Verifies service continuity through app-02.
+5. Restores app-01.
+6. Verifies both instances recover.
+
+Evidence is stored under `evidence/`.
+
+## Backup
+
+Create a PostgreSQL logical backup:
+
+```bash
+./backup.sh
+```
+
+Backups are written to:
+
+```text
+backups/
+```
+
+The directory is intentionally ignored by Git.
+
+## Restore
+
+Restore a PostgreSQL backup:
+
+```bash
+./restore.sh backups/<backup-file>.sql
+```
+
+The restore script:
+
+- validates the backup
+- verifies PostgreSQL is running
+- resets the `public` schema
+- restores the SQL dump with `ON_ERROR_STOP=1`
+- verifies the `records` table exists
+
+## Persistence test
+
+PostgreSQL data is stored in the named volume:
+
+```text
+barq-assessment_postgres-data
+```
+
+Recreating the PostgreSQL and application containers does not remove the volume:
+
+```bash
+docker compose -p barq-assessment up -d --force-recreate postgres app-01 app-02
+```
+
+The persistence marker can then be verified through:
+
+```bash
+curl -fsS http://127.0.0.1:8080/records
+```
+
+## Network inspection
+
+Check backend isolation:
+
+```bash
+docker network inspect barq-assessment_backend \
+  --format 'Internal={{.Internal}} Gateway={{.IPAM.Config}}'
+```
+
+Check frontend:
+
+```bash
+docker network inspect barq-assessment_frontend \
+  --format 'Internal={{.Internal}} Gateway={{.IPAM.Config}}'
+```
+
+Inspect exposed ports:
+
+```bash
+docker compose -p barq-assessment ps
+```
+
+Only NGINX should have a host-published port.
+
+## CI
+
+GitHub Actions workflow:
+
+```text
+.github/workflows/ci.yml
+```
+
+The workflow performs:
+
+1. checkout
+2. required-file checks
+3. Python syntax checks
+4. shell syntax checks
+5. Compose configuration validation
+6. image build
+7. service startup
+8. readiness wait
+9. complete validation
+10. cleanup
+
+## Stop
+
+```bash
+docker compose -p barq-assessment stop
+```
+
+**Start again**
+
+```bash
+docker compose -p barq-assessment start
+```
+
+**Stop and remove containers**
+
+```bash
+docker compose -p barq-assessment down
+```
+
+**Remove containers and persistent volumes**
+
+Only use this when intentionally deleting application data:
+
+```bash
+docker compose -p barq-assessment down -v
+```
+
+## Project documentation
+
+- `troubleshooting.md` — investigation journal and failed attempts
+- `log_analysis.md` — analysis of the supplied logs
+- `decisions.md` — architectural and implementation decisions
+- `security_review.md` — implemented security controls and production recommendations
+- `AI_USAGE.md` — AI assistance disclosure
+- `docs/ARCHITECTURE.md` — architecture description
+- `docs/EVIDENCE_INDEX.md` — requirement-to-evidence mapping
+
+## Evidence
+
+Generated verification artifacts are stored under:
+
+```text
+evidence/
+```
+
+Examples:
+
+- `resource_limits_verification.txt`
+- `failure_test.txt`
+- `backup_restore_verification.txt`
+- `backup_restore_final.txt`
+
+## Security notes
+
+Do not commit:
+
+- `.env`
+- `config/app.env`
+- `config/app.env.save`
+- database backups
+- generated local assessment artifacts
+
+The repository must be reviewed for historical secrets before public push.
+
+## License
+
+This repository is an internship assignment submission for BARQ Systems.

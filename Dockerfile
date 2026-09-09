@@ -14,7 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app app/ ./app/
 
-COPY --chown=app:app config/app.env /srv/app.env
 
 USER app
 

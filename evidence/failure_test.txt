@@ -1,0 +1,46 @@
+BARQ backend failure/recovery test
+BASE_URL=http://127.0.0.1:8080
+APP_CONTAINER=app-01
+
+===== BASELINE (20 requests) =====
+requests=20
+successes=20
+errors=0
+average_latency_ms=2.81
+status_codes={'200': 20}
+instances={'app-02': 10, 'app-01': 10}
+PASS baseline traffic
+
+Stopping backend: app-01
+PASS app-01 stopped
+
+===== DURING BACKEND FAILURE (30 requests) =====
+requests=30
+successes=30
+errors=0
+average_latency_ms=269.94
+status_codes={'200': 30}
+instances={'app-02': 30}
+PASS service remained available through app-02
+
+Restoring backend: app-01
+Waiting for app-01 health...
+PASS app-01 is healthy again
+PASS NGINX health recovered
+
+===== RECOVERY (20 requests) =====
+requests=20
+successes=20
+errors=0
+average_latency_ms=3.42
+status_codes={'200': 20}
+instances={'app-01': 10, 'app-02': 10}
+PASS recovered backend served traffic again
+PASS final /health check
+
+===== FAILURE TEST SUMMARY =====
+baseline: successes=20 errors=0
+during_failure: successes=30 errors=0
+recovery: successes=20 errors=0
+
+FAILURE TEST: PASS
